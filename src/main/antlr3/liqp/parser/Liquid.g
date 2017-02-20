@@ -85,15 +85,36 @@ tokens {
 
   @Override
   public void reportError(RecognitionException e) {
-		String hdr = getErrorHeader(e);
-		String msg = getErrorMessage(e, this.getTokenNames());
-	    throw new RuntimeException(hdr+" "+msg, e);
+    String hdr = getErrorHeader(e);
+    String msg = getErrorMessage(e, this.getTokenNames());
+    throw new RuntimeException(hdr+" "+msg, e);
   }
 }
 
 @lexer::members {
+
+  private boolean stripSpacesAroundTags = false;
+
   private boolean inTag = false;
   private boolean inRaw = false;
+
+  public LiquidLexer(boolean stripSpacesAroundTags, CharStream input) {
+    this(input, new RecognizerSharedState());
+    this.stripSpacesAroundTags = stripSpacesAroundTags;
+  }
+
+  private boolean openStripTagAhead() {
+
+    int indexLA = 1;
+
+    while(Character.isSpaceChar(input.LA(indexLA)) || input.LA(indexLA) == '\r' || input.LA(indexLA) == '\n') {
+      indexLA++;
+    }
+
+    return stripSpacesAroundTags
+        ? input.LA(indexLA) == '{' && (input.LA(indexLA + 1) == '{' || input.LA(indexLA + 1) == '\u0025')
+        : input.LA(indexLA) == '{' && (input.LA(indexLA + 1) == '{' || input.LA(indexLA + 1) == '\u0025') && input.LA(indexLA + 2) == '-';
+  }
 
   private boolean openRawEndTagAhead() {
 
@@ -119,10 +140,10 @@ tokens {
     return input.LA(1) == '{' && (input.LA(2) == '{' || input.LA(2) == '\u0025');
   }
   
-//  @Override
-//  public void reportError(RecognitionException e) {
-//    throw new RuntimeException(e); 
-//  }
+  @Override
+  public void reportError(RecognitionException e) {
+    throw new RuntimeException(e); 
+  }
 
   private String strip(String text, boolean singleQuoted) {
     return text.substring(1, text.length() - 1);
@@ -390,6 +411,16 @@ other_than_tag_end
  ;
 
 /* lexer rules */
+OutStartDefaultStrip : {stripSpacesAroundTags}?=> WhitespaceChar* '{{' {inTag=true; $type=OutStart;};
+OutEndDefaultStrip   : {stripSpacesAroundTags}?=> '}}' WhitespaceChar* {inTag=false; $type=OutEnd;};
+TagStartDefaultStrip : {stripSpacesAroundTags}?=> WhitespaceChar* '{%' {inTag=true; $type=TagStart;};
+TagEndDefaultStrip   : {stripSpacesAroundTags}?=> '%}' WhitespaceChar* {inTag=false; $type=TagEnd;};
+
+OutStartStrip : WhitespaceChar* '{{-' {inTag=true; $type=OutStart;};
+OutEndStrip   : '-}}' WhitespaceChar* {inTag=false; $type=OutEnd;};
+TagStartStrip : WhitespaceChar* '{%-' {inTag=true; $type=TagStart;};
+TagEndStrip   : '-%}' WhitespaceChar* {inTag=false; $type=TagEnd;};
+
 OutStart : '{{' {inTag=true;};
 OutEnd   : '}}' {inTag=false;};
 TagStart : '{%' {inTag=true;};
@@ -464,7 +495,7 @@ Id
  ;
 
 Other
- : ({!inTag && !openTagAhead()}?=> . )+
+ : ({!openStripTagAhead() && !inTag && !openTagAhead()}?=> . )+
  | ({!inTag && inRaw && !openRawEndTagAhead()}?=> . )+
  ;
 
@@ -473,6 +504,8 @@ NoSpace
  ;
 
 /* fragment rules */
+fragment WhitespaceChar : ' ' | '\t' | '\r' | '\n';
+
 fragment Letter : 'a'..'z' | 'A'..'Z';
 fragment Digit  : '0'..'9';
 fragment SStr   : '\'' ~'\''* '\'' {setText(strip($text, true));};
